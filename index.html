@@ -1,0 +1,67 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CSV Column Clinic</title><style>*{box-sizing:border-box}body{margin:0;background:#f1f4f5;color:#182f3a;font:16px/1.5 "Segoe UI",sans-serif}main{max-width:880px;margin:5vh auto;background:white;padding:clamp(18px,5vw,44px);border-top:6px solid #216a77}h1{font:700 clamp(32px,5vw,48px)/1.1 Georgia,serif;margin:0}label{display:block;margin:12px 0}fieldset{border:1px solid #8babb0;padding:14px}input:not([type=checkbox]),select,audio{display:block;max-width:100%;width:100%;padding:8px;font:inherit}button{font:inherit;border:0;border-radius:4px;background:#175965;color:white;padding:9px 14px;margin:5px 0;cursor:pointer}button:disabled{opacity:.5}.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}table{border-collapse:collapse;width:100%}td,th{white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;padding:6px;border-bottom:1px solid #c1d2d5}#preview{max-height:40vh;overflow:auto}</style></head><body><main><h1>CSV Column Clinic</h1><p>Clean one column of a CSV and review the changes before exporting.</p><label>CSV file (UTF-8)<input id="file" type="file" accept=".csv,text/csv"></label><fieldset id="settings" disabled><legend>Column settings</legend><label>Column<select id="column"></select></label><label><input type="checkbox" id="trim" checked> Trim outer whitespace</label><label><input type="checkbox" id="spaces"> Collapse repeated spaces and tabs</label><label>Letter case<select id="letter"><option>Keep original</option><option>Uppercase</option><option>Lowercase</option></select></label></fieldset><p id="status" role="status">Choose a comma-separated file with a header row.</p><div id="preview"></div><button id="save" disabled>Download cleaned CSV</button></main><script>
+'use strict';
+const $=id=>document.getElementById(id);
+function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000)}
+
+function parse(text){
+  const records=[];
+  let row=[],value='',quoted=false,closed=false,started=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(quoted){
+      if(c!=='"'){value+=c;continue}
+      if(text[i+1]==='"'){value+='"';i++;continue}
+      quoted=false;closed=true;continue;
+    }
+    if(c===','){row.push(value);value='';closed=false;started=true;continue}
+    if(c==='\r'||c==='\n'){
+      if(c==='\r'&&text[i+1]==='\n')i++;
+      row.push(value);records.push(row);row=[];value='';closed=false;started=false;continue;
+    }
+    if(closed)throw Error('Unexpected text after a quoted field.');
+    if(c==='"'){
+      if(value.length)throw Error('Unexpected quote inside a field.');
+      quoted=true;
+    }else value+=c;
+    started=true;
+  }
+  if(quoted)throw Error('Unclosed quote.');
+  if(started){row.push(value);records.push(row)}
+  if(!records.length||records.some(r=>r.length!==records[0].length))throw Error('Expected a header and the same number of fields in every record.');
+  return records;
+}
+const encode=v=>/[,"\r\n]/.test(v)?'"'+v.replaceAll('"','""')+'"':v;
+let rows=[],revision=0;
+function clean(v){
+  if($('trim').checked)v=v.trim();
+  if($('spaces').checked)v=v.replace(/[ \t]+/g,' ');
+  if($('letter').value==='Uppercase')v=v.toUpperCase();
+  if($('letter').value==='Lowercase')v=v.toLowerCase();
+  return v;
+}
+function preview(){
+  const col=Number($('column').value);let count=0;
+  const table=document.createElement('table');const heading=table.insertRow();
+  for(const label of ['Record','Before','After']){const th=document.createElement('th');th.textContent=label;heading.append(th)}
+  for(let i=1;i<rows.length;i++){
+    const before=rows[i][col],after=clean(before);if(before===after)continue;
+    if(++count<=20){const r=table.insertRow();for(const v of [i,before,after])r.insertCell().textContent=v}
+  }
+  $('preview').replaceChildren(...(count?[table]:[]));$('status').textContent=count+' of '+(rows.length-1)+' data records changed. '+(count>20?'Showing the first 20 changes.':'');
+}
+$('file').onchange=async()=>{
+  const id=++revision;rows=[];$('preview').replaceChildren();$('column').replaceChildren();$('save').disabled=true;$('settings').disabled=true;
+  const file=$('file').files[0];if(!file)return;
+  try{
+    const parsed=parse(new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()));if(id!==revision)return;
+    rows=parsed;rows[0].forEach((v,i)=>$('column').add(new Option((i+1)+' · '+(v||'(unnamed)'),i)));
+    $('save').disabled=false;$('settings').disabled=false;preview();
+  }catch(e){if(id===revision)$('status').textContent=e.message}
+};
+$('settings').onchange=preview;
+$('save').onclick=()=>{
+ const col=Number($('column').value);
+ const lines=rows.map((r,i)=>r.map((v,j)=>encode(i&&j===col?clean(v):v)).join(','));
+ download(new Blob(['\ufeff',lines.join('\r\n'),'\r\n'],{type:'text/csv;charset=utf-8'}),'cleaned.csv');
+};
+</script></body></html>
